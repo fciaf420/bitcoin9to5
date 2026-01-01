@@ -395,8 +395,9 @@ const analyzeAndUpdateConfig = () => {
   const data = loadMarketData()
   const snapshots = data.snapshots.filter(s => s.dow >= 1 && s.dow <= 5)
 
-  if (snapshots.length < 20) {
-    console.log(`Not enough data yet (${snapshots.length}/20 snapshots)`)
+  const uniqueDates = new Set(snapshots.map(s => s.date))
+  if (uniqueDates.size < 3) {
+    console.log(`Not enough data yet (${uniqueDates.size}/3 days)`)
     return
   }
 
@@ -463,7 +464,7 @@ const analyzeAndUpdateConfig = () => {
 
   const adjustTime = (timeStr) => {
     const [h, m] = timeStr.split(':').map(Number)
-    let totalMins = h * 60 + m - 1
+    let totalMins = h * 60 + m - 10
     return `${Math.floor(totalMins / 60)}:${totalMins % 60}`
   }
 
@@ -534,7 +535,7 @@ cron.schedule('0 18 * * 1-5', analyzeAndUpdateConfig, { timezone: tz })
 
 console.log('Bot running - Nado Perps (smart flip strategy)')
 console.log('Account:', account.address)
-console.log('Schedule: Short at', zoneConfig?.flipToShortReadable || '9:29', '/ Long at', zoneConfig?.flipToLongReadable || '16:01', 'ET')
+log('schedule', { short: zoneConfig?.flipToShortReadable || '9:29', long: zoneConfig?.flipToLongReadable || '16:01' })
 console.log(`Profit target: ${PROFIT_TARGET_PCT}% price move (~${PROFIT_TARGET_PCT * TARGET_LEVERAGE}% PnL)`)
 console.log(`Price check interval: ${POLL_INTERVAL / 1000}s`)
 console.log('Data collection: 7-11 AM, 2-6 PM ET (every 5 min). Analysis: 6 PM ET')
@@ -560,6 +561,7 @@ try {
   saveState()
   console.log('State:', { zone: state.zone, entryPrice: state.entryPrice, tookProfit: state.tookProfit })
 
+  analyzeAndUpdateConfig()
   startPriceMonitor()
 } catch (err) {
   console.error('Startup check failed:', err.message)
