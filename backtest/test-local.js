@@ -5,7 +5,7 @@
  */
 
 import { runBacktest, formatResults } from '../lib/backtester.js'
-import { DEFAULT_CONFIG, getZone, calcProfitPct } from '../lib/strategy.js'
+import { DEFAULT_CONFIG, DEFAULT_COSTS, getZone, calcProfitPct } from '../lib/strategy.js'
 
 // Generate synthetic price data that mimics the 9-to-5 pattern
 function generateSyntheticData(days = 7) {
@@ -91,8 +91,14 @@ console.log(`  Generated ${priceData.length} price points`)
 console.log(`  Date range: ${priceData[0].timestamp.toISOString().split('T')[0]} to ${priceData[priceData.length - 1].timestamp.toISOString().split('T')[0]}`)
 console.log('')
 
-console.log('Running backtest...\n')
-const result = runBacktest(priceData, DEFAULT_CONFIG)
+console.log('Running backtest with costs...\n')
+console.log('Cost assumptions:')
+console.log(`  Taker Fee:     ${DEFAULT_COSTS.takerFeeBps} bps`)
+console.log(`  Slippage:      ${DEFAULT_COSTS.slippageBps} bps`)
+console.log(`  Funding Rate:  ${DEFAULT_COSTS.avgFundingRateBps} bps/8h`)
+console.log('')
+
+const result = runBacktest(priceData, DEFAULT_CONFIG, DEFAULT_COSTS)
 
 console.log(formatResults(result))
 
@@ -104,7 +110,8 @@ if (result.trades.length > 0) {
     console.log(
       `  #${i + 1} ${t.side.toUpperCase().padEnd(5)} ` +
       `$${t.entryPrice.toFixed(0)} → $${t.exitPrice.toFixed(0)} ` +
-      `${t.pnlPct >= 0 ? '+' : ''}${t.pnlPct.toFixed(2)}% ` +
+      `gross: ${t.grossPnlPct >= 0 ? '+' : ''}${t.grossPnlPct.toFixed(2)}% ` +
+      `net: ${t.netPnlPct >= 0 ? '+' : ''}${t.netPnlPct.toFixed(2)}% ` +
       `(${t.exitReason})`
     )
   }
@@ -112,4 +119,6 @@ if (result.trades.length > 0) {
 
 console.log('\n✅ Backtest completed successfully!')
 console.log('\nTo run with real Binance data:')
-console.log('  node backtest/run.js --days 30\n')
+console.log('  node backtest/run.js --days 30')
+console.log('  node backtest/run.js --no-costs  # Compare gross vs net')
+console.log('  node backtest/run.js --fee-tier tier3  # Use lower fees\n')
