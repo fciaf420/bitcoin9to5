@@ -12,7 +12,7 @@
  */
 
 import { readFileSync, writeFileSync, existsSync } from 'fs'
-import { select, input, confirm, password } from '@inquirer/prompts'
+import { select, input, confirm, password, number } from '@inquirer/prompts'
 import chalk from 'chalk'
 import ora from 'ora'
 import { spawn } from 'child_process'
@@ -21,6 +21,35 @@ import { fileURLToPath } from 'url'
 
 const __dirname = dirname(fileURLToPath(import.meta.url))
 const ROOT_DIR = join(__dirname, '..')
+const BOT_CONFIG_PATH = join(ROOT_DIR, '.bot-config.json')
+
+// Default configuration values
+const DEFAULT_CONFIG = {
+  leverage: 10,
+  profitTargetPct: 1.0,
+  trailingStopPct: 0.5,
+  tpZoneHoursThreshold: 6,
+  shortStartHour: 9,
+  shortStartMin: 29,
+  longStartHour: 16,
+  longStartMin: 1
+}
+
+// Load config from file or return defaults
+function loadConfig() {
+  try {
+    if (existsSync(BOT_CONFIG_PATH)) {
+      const saved = JSON.parse(readFileSync(BOT_CONFIG_PATH, 'utf8'))
+      return { ...DEFAULT_CONFIG, ...saved }
+    }
+  } catch {}
+  return { ...DEFAULT_CONFIG }
+}
+
+// Save config to file
+function saveConfig(config) {
+  writeFileSync(BOT_CONFIG_PATH, JSON.stringify(config, null, 2))
+}
 
 // Header art
 const HEADER = `
@@ -145,6 +174,14 @@ async function mainMenu() {
       {
         name: `${chalk.yellow('Check Status')}    View current position & config`,
         value: 'status'
+      },
+      {
+        name: `${chalk.white('Edit Config')}     Modify bot parameters`,
+        value: 'config'
+      },
+      {
+        name: `${chalk.gray('Schedule')}        View upcoming zone transitions`,
+        value: 'schedule'
       },
       {
         name: `${chalk.red('Exit')}`,
@@ -502,6 +539,258 @@ async function checkStatus() {
   await pressEnterToContinue()
 }
 
+// Config editor
+async function editConfig() {
+  printHeader('CONFIGURATION EDITOR')
+
+  const config = loadConfig()
+
+  console.log('  Current settings:\n')
+  console.log(`  ${chalk.cyan('Leverage:')}           ${config.leverage}x`)
+  console.log(`  ${chalk.cyan('Profit Target:')}      ${config.profitTargetPct}%`)
+  console.log(`  ${chalk.cyan('Trailing Stop:')}      ${config.trailingStopPct}%`)
+  console.log(`  ${chalk.cyan('TP Zone Threshold:')} ${config.tpZoneHoursThreshold} hours`)
+  console.log(`  ${chalk.cyan('Short Zone Start:')}  ${config.shortStartHour}:${String(config.shortStartMin).padStart(2, '0')} ET`)
+  console.log(`  ${chalk.cyan('Long Zone Start:')}   ${config.longStartHour}:${String(config.longStartMin).padStart(2, '0')} ET`)
+  console.log('')
+
+  const choice = await select({
+    message: 'What to edit?',
+    choices: [
+      { name: `${chalk.cyan('Leverage')}           Current: ${config.leverage}x`, value: 'leverage' },
+      { name: `${chalk.cyan('Profit Target')}      Current: ${config.profitTargetPct}%`, value: 'profitTarget' },
+      { name: `${chalk.cyan('Trailing Stop')}      Current: ${config.trailingStopPct}%`, value: 'trailingStop' },
+      { name: `${chalk.cyan('TP Zone Threshold')} Current: ${config.tpZoneHoursThreshold}h`, value: 'tpThreshold' },
+      { name: `${chalk.cyan('Zone Times')}         Short: ${config.shortStartHour}:${String(config.shortStartMin).padStart(2, '0')}, Long: ${config.longStartHour}:${String(config.longStartMin).padStart(2, '0')}`, value: 'zoneTimes' },
+      { name: `${chalk.yellow('Reset to Defaults')}`, value: 'reset' },
+      { name: `${chalk.gray('Back to menu')}`, value: 'back' }
+    ],
+    theme: {
+      prefix: '  ',
+      style: { highlight: (text) => chalk.cyan.bold(text) }
+    }
+  })
+
+  if (choice === 'back') return
+
+  if (choice === 'reset') {
+    const confirmed = await confirm({
+      message: 'Reset all settings to defaults?',
+      default: false,
+      theme: { prefix: '  ' }
+    })
+    if (confirmed) {
+      saveConfig(DEFAULT_CONFIG)
+      console.log(chalk.green('\n  ✓ Settings reset to defaults\n'))
+    }
+    await pressEnterToContinue()
+    return
+  }
+
+  let updated = false
+
+  switch (choice) {
+    case 'leverage': {
+      const val = await number({
+        message: 'Leverage (1-20):',
+        default: config.leverage,
+        min: 1,
+        max: 20,
+        theme: { prefix: '  ' }
+      })
+      if (val) {
+        config.leverage = val
+        updated = true
+      }
+      break
+    }
+    case 'profitTarget': {
+      const val = await input({
+        message: 'Profit target % (e.g., 1.0):',
+        default: String(config.profitTargetPct),
+        theme: { prefix: '  ' }
+      })
+      const parsed = parseFloat(val)
+      if (!isNaN(parsed) && parsed > 0 && parsed <= 10) {
+        config.profitTargetPct = parsed
+        updated = true
+      } else {
+        console.log(chalk.red('  Invalid value (must be 0.1-10)'))
+      }
+      break
+    }
+    case 'trailingStop': {
+      const val = await input({
+        message: 'Trailing stop % (e.g., 0.5):',
+        default: String(config.trailingStopPct),
+        theme: { prefix: '  ' }
+      })
+      const parsed = parseFloat(val)
+      if (!isNaN(parsed) && parsed > 0 && parsed <= 5) {
+        config.trailingStopPct = parsed
+        updated = true
+      } else {
+        console.log(chalk.red('  Invalid value (must be 0.1-5)'))
+      }
+      break
+    }
+    case 'tpThreshold': {
+      const val = await number({
+        message: 'TP zone threshold (hours before short zone):',
+        default: config.tpZoneHoursThreshold,
+        min: 1,
+        max: 12,
+        theme: { prefix: '  ' }
+      })
+      if (val) {
+        config.tpZoneHoursThreshold = val
+        updated = true
+      }
+      break
+    }
+    case 'zoneTimes': {
+      console.log(chalk.gray('\n  Enter times in 24-hour format (ET)\n'))
+
+      const shortStart = await input({
+        message: 'Short zone start (HH:MM):',
+        default: `${config.shortStartHour}:${String(config.shortStartMin).padStart(2, '0')}`,
+        theme: { prefix: '  ' }
+      })
+
+      const longStart = await input({
+        message: 'Long zone start (HH:MM):',
+        default: `${config.longStartHour}:${String(config.longStartMin).padStart(2, '0')}`,
+        theme: { prefix: '  ' }
+      })
+
+      const parseTime = (str) => {
+        const match = str.match(/^(\d{1,2}):(\d{2})$/)
+        if (!match) return null
+        const h = parseInt(match[1]), m = parseInt(match[2])
+        if (h < 0 || h > 23 || m < 0 || m > 59) return null
+        return { hour: h, min: m }
+      }
+
+      const short = parseTime(shortStart)
+      const long = parseTime(longStart)
+
+      if (short && long) {
+        config.shortStartHour = short.hour
+        config.shortStartMin = short.min
+        config.longStartHour = long.hour
+        config.longStartMin = long.min
+        updated = true
+      } else {
+        console.log(chalk.red('  Invalid time format'))
+      }
+      break
+    }
+  }
+
+  if (updated) {
+    saveConfig(config)
+    console.log(chalk.green('\n  ✓ Configuration saved\n'))
+  }
+
+  await pressEnterToContinue()
+}
+
+// Schedule viewer
+async function viewSchedule() {
+  printHeader('ZONE SCHEDULE')
+
+  const config = loadConfig()
+  const now = new Date()
+
+  // Calculate ET time
+  const etOffset = -5 // EST (simplified, doesn't handle DST)
+  const utcHours = now.getUTCHours()
+  const utcMins = now.getUTCMinutes()
+  const etHour = (utcHours + etOffset + 24) % 24
+  const etMin = utcMins
+  const dayOfWeek = now.getUTCDay()
+
+  const days = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
+  const shortDays = ['Sun', 'Mon', 'Tue', 'Wed', 'Thu', 'Fri', 'Sat']
+
+  // Current time display
+  console.log(`  ${chalk.bold('Current Time')}\n`)
+  console.log(`  ${chalk.cyan('ET:')}  ${days[dayOfWeek]} ${etHour}:${String(etMin).padStart(2, '0')}`)
+  console.log(`  ${chalk.cyan('UTC:')} ${days[now.getUTCDay()]} ${utcHours}:${String(utcMins).padStart(2, '0')}`)
+  console.log('')
+
+  // Determine current zone
+  let currentZone = 'long'
+  if (dayOfWeek >= 1 && dayOfWeek <= 5) {
+    const etMins = etHour * 60 + etMin
+    const shortStartMins = config.shortStartHour * 60 + config.shortStartMin
+    const longStartMins = config.longStartHour * 60 + config.longStartMin
+    if (etMins >= shortStartMins && etMins < longStartMins) {
+      currentZone = 'short'
+    }
+  }
+
+  const zoneColor = currentZone === 'long' ? chalk.green : chalk.red
+  console.log(`  ${chalk.bold('Current Zone:')} ${zoneColor(currentZone.toUpperCase())}\n`)
+
+  console.log(DIVIDER + '\n')
+  console.log(`  ${chalk.bold('Upcoming Transitions (next 7 days)')}\n`)
+
+  // Generate next 7 days of transitions
+  const transitions = []
+  const shortTime = `${config.shortStartHour}:${String(config.shortStartMin).padStart(2, '0')}`
+  const longTime = `${config.longStartHour}:${String(config.longStartMin).padStart(2, '0')}`
+
+  for (let i = 0; i < 7; i++) {
+    const futureDate = new Date(now)
+    futureDate.setDate(now.getDate() + i)
+    const futureDayOfWeek = futureDate.getDay()
+    const dayName = shortDays[futureDayOfWeek]
+    const dateStr = `${futureDate.getMonth() + 1}/${futureDate.getDate()}`
+
+    if (futureDayOfWeek >= 1 && futureDayOfWeek <= 5) {
+      // Weekday - has zone transitions
+      const shortStartMins = config.shortStartHour * 60 + config.shortStartMin
+      const longStartMins = config.longStartHour * 60 + config.longStartMin
+      const currentMins = (i === 0) ? etHour * 60 + etMin : 0
+
+      if (i === 0) {
+        // Today - only show future transitions
+        if (currentMins < shortStartMins) {
+          transitions.push({ day: dayName, date: dateStr, time: shortTime, zone: 'SHORT', isToday: true })
+        }
+        if (currentMins < longStartMins) {
+          transitions.push({ day: dayName, date: dateStr, time: longTime, zone: 'LONG', isToday: true })
+        }
+      } else {
+        transitions.push({ day: dayName, date: dateStr, time: shortTime, zone: 'SHORT' })
+        transitions.push({ day: dayName, date: dateStr, time: longTime, zone: 'LONG' })
+      }
+    } else {
+      // Weekend - all long
+      if (i === 0) {
+        transitions.push({ day: dayName, date: dateStr, time: '--:--', zone: 'LONG (all day)', isWeekend: true })
+      } else {
+        transitions.push({ day: dayName, date: dateStr, time: '--:--', zone: 'LONG (all day)', isWeekend: true })
+      }
+    }
+  }
+
+  // Display transitions table
+  for (const t of transitions.slice(0, 14)) {
+    const zoneColor = t.zone.includes('LONG') ? chalk.green : chalk.red
+    const dayColor = t.isToday ? chalk.yellow : (t.isWeekend ? chalk.gray : chalk.white)
+    const marker = t.isToday ? chalk.yellow(' ←') : ''
+    console.log(`  ${dayColor(t.day)} ${chalk.gray(t.date.padStart(5))}  ${chalk.cyan(t.time)}  ${zoneColor(t.zone)}${marker}`)
+  }
+
+  console.log('')
+  console.log(DIVIDER + '\n')
+  console.log(`  ${chalk.gray('Zone times can be modified in Edit Config')}\n`)
+
+  await pressEnterToContinue()
+}
+
 // Helper to wait for user
 async function pressEnterToContinue() {
   await input({
@@ -531,6 +820,12 @@ async function main() {
           break
         case 'status':
           await checkStatus()
+          break
+        case 'config':
+          await editConfig()
+          break
+        case 'schedule':
+          await viewSchedule()
           break
         case 'exit':
           console.log(chalk.cyan('\n  Goodbye!\n'))
